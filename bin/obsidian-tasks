@@ -26,6 +26,7 @@ DATAVIEW = {DUE: "due", DONE: "completion", CREATED: "created",
             SCHEDULED: "scheduled", START: "start", "❌": "cancelled",
             "\U0001F501": "repeat", "\U0001F194": "id", "⛔": "dependsOn",
             "\U0001F3C1": "onCompletion"}
+DATAVIEW_PRIORITY = {"highest": 0, "high": 1, "medium": 2, "low": 4, "lowest": 5}
 # Every signifier Obsidian Tasks defines, in both formats, whether or not this
 # tool reads it. The list exists so a rename can find where the description ends
 # and leave metadata it doesn't understand untouched rather than eating it.
@@ -252,9 +253,90 @@ def rewrite(path, exact, transform):
         os.close(dirfd)
 
 
+def field_re(key, value=r"[^\]]*"):
+    """A Dataview inline field, as Obsidian Tasks writes it."""
+    return r"\[\s*" + key + r"\s*::\s*" + value + r"\s*\]"
+
+
+def read_due(metadata):
+    """The due date in whichever format wrote it, or "" for a task without one."""
+    for pattern in (re.escape(DUE) + r"\s*" + DATE_RE, field_re("due", DATE_RE)):
+        match = re.search(pattern, metadata)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def read_priority(metadata):
+    """0 (highest) to 5 (lowest), and 3 for a task with no priority set."""
+    for glyph, rank in PRIORITY.items():
+        if glyph in metadata:
+            return rank
+    match = re.search(field_re("priority", r"(\w+)"), metadata)
+    return DATAVIEW_PRIORITY.get(match.group(1).lower(), 3) if match else 3
+
+
+def has_signifier(metadata, glyph):
+    """True when the signifier is already on the line, in either format."""
+    key = DATAVIEW.get(glyph)
+    return glyph in metadata or bool(key and re.search(r"\[\s*" + key + r"\s*::", metadata))
+
+
 def strip_signifier(metadata, glyph, dated=True):
+    """Remove a signifier and its value, in whichever format wrote it."""
     pattern = re.escape(glyph) + (r"\s*" + DATE_RE + r"?" if dated else "")
-    return " ".join(re.sub(pattern, "", metadata).split())
+    metadata = re.sub(pattern, "", metadata)
+    key = DATAVIEW.get(glyph)
+    if key:
+        metadata = re.sub(field_re(key), "", metadata)
+    return " ".join(metadata.split())
+
+
+def stamp(metadata, glyph, value, fmt):
+    """Append a signifier, written the way this vault writes them.
+
+    Writing the other format puts a date on the line that Obsidian, reading it
+    the way the vault is set, does not see at all.
+    """
+    key = DATAVIEW.get(glyph)
+    piece = f"[{key}:: {value}]" if fmt == "dataview" and key else f"{glyph} {value}"
+    return f"{metadata} {piece}".strip()
+
+
+TASKS_SETTINGS = os.path.join(".obsidian", "plugins", "obsidian-tasks-plugin", "data.json")
+
+
+def task_format(vault):
+    """"dataview" or "emoji", as this vault's Obsidian Tasks settings has it.
+
+    The scan root comes in from the caller rather than being worked back out of
+    the note being edited: the widget already knows which folder it is showing,
+    and a helper that re-derived it from a path would be guessing at something
+    the caller had in hand. That root is allowed to be a folder *inside* a
+    vault, which is a documented way to use this, so the search for the settings
+    climbs until it reaches one. A vault without the plugin, or with the setting
+    unset, gets the plugin's own default of emoji.
+    """
+    if not vault:
+        return "emoji"
+    directory = os.path.abspath(os.path.expanduser(vault))
+    while True:
+        settings = os.path.join(directory, TASKS_SETTINGS)
+        if os.path.isfile(settings):
+            try:
+                with open(settings, encoding="utf-8") as handle:
+                    fmt = json.load(handle).get("taskFormat")
+            except (OSError, ValueError):
+                return "emoji"
+            return "dataview" if fmt == "dataview" else "emoji"
+        # A vault root with no settings of the plugin's own: stop here rather
+        # than climb out of it and answer with some other vault's format.
+        if os.path.isdir(os.path.join(directory, ".obsidian")):
+            return "emoji"
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return "emoji"
+        directory = parent
 
 
 # ------------------------------------------------------------- vault discovery
@@ -336,26 +418,27 @@ def scan(vault):
             continue
         body, status = match.group("body"), match.group("status")
         description, metadata = split_body(body)
-        due = re.search(re.escape(DUE) + r"\s*" + DATE_RE, metadata)
         tasks.append({
             "file": path,
             "line": int(lineno) if lineno.isdigit() else 0,
             "raw": raw,
             "label": description,
-            "due": due.group(1) if due else "",
-            "priority": next((rank for glyph, rank in PRIORITY.items() if glyph in metadata), 3),
+            "due": read_due(metadata),
+            "priority": read_priority(metadata),
             "open": status == " ",
             "vaultPath": os.path.relpath(path, vault),
         })
     return tasks
 
 
-def complete(path, exact):
+def complete(vault, path, exact):
+    fmt = task_format(vault)
+
     def transform(status, description, metadata):
         if status != " ":
             return None
-        if DONE not in metadata:
-            metadata = f"{metadata} {DONE} {date.today().isoformat()}".strip()
+        if not has_signifier(metadata, DONE):
+            metadata = stamp(metadata, DONE, date.today().isoformat(), fmt)
         return "x", description, metadata
     return rewrite(path, exact, transform)
 
@@ -368,10 +451,11 @@ def uncomplete(path, exact):
     return rewrite(path, exact, transform)
 
 
-def rename(path, exact, text):
+def rename(vault, path, exact, text):
     text = " ".join(text.split())
     if not text:
         return 1
+    fmt = task_format(vault)
 
     def transform(status, description, metadata):
         # A rename that reintroduces a date phrase should move the due date too,
@@ -380,7 +464,7 @@ def rename(path, exact, text):
         if not body:
             return None
         if due:
-            metadata = f"{strip_signifier(metadata, DUE)} {DUE} {due}".strip()
+            metadata = stamp(strip_signifier(metadata, DUE), DUE, due, fmt)
         return status, body, metadata
     return rewrite(path, exact, transform)
 
@@ -424,10 +508,11 @@ def weekday_ahead(prefix):
     return (today + timedelta(days=ahead or 7)).isoformat()
 
 
-def add(path, text):
+def add(vault, path, text):
     text, due = extract_due(" ".join(text.split()))
     if not text:
         return 1
+    fmt = task_format(vault)
     parent = os.path.dirname(path)
     # The caller is expected to have a real vault; if it doesn't, refuse rather
     # than conjuring a directory tree somewhere nobody asked for.
@@ -458,8 +543,10 @@ def add(path, text):
         # appending blind would weld the new task onto the last one. Trim the
         # tail, then rewrite: the task lands directly under the previous one,
         # every time.
-        trailer = f" {DUE} {due}" if due else ""
-        line = f"- [ ] {text} {CREATED} {date.today().isoformat()}{trailer}".rstrip()
+        metadata = stamp("", CREATED, date.today().isoformat(), fmt)
+        if due:
+            metadata = stamp(metadata, DUE, due, fmt)
+        line = f"- [ ] {text} {metadata}".rstrip()
         body = existing.rstrip()
         try:
             write_note(directory, dirfd, name,
@@ -473,9 +560,13 @@ def add(path, text):
 
 def main():
     if len(sys.argv) < 2:
+        # The vault goes to the commands that write metadata, because what
+        # they write depends on the format it is set to. uncomplete only
+        # removes, in either format, so it does not need one.
         print("usage: omarchy-tasks vault [hint] | scan <vault> "
-              "| complete|uncomplete <file> <line> | rename <file> <line> <text> "
-              "| add <file> <text>", file=sys.stderr)
+              "| complete <vault> <file> <line> | uncomplete <file> <line> "
+              "| rename <vault> <file> <line> <text> | add <vault> <file> <text>",
+              file=sys.stderr)
         return 2
     action, args = sys.argv[1], sys.argv[2:]
     if action == "vault":
@@ -484,14 +575,14 @@ def main():
     if action == "scan":
         json.dump(scan(args[0]) if os.path.isdir(args[0]) else [], sys.stdout)
         return 0
-    if action == "complete" and len(args) >= 2:
-        return complete(args[0], args[1])
+    if action == "complete" and len(args) >= 3:
+        return complete(args[0], args[1], args[2])
     if action == "uncomplete" and len(args) >= 2:
         return uncomplete(args[0], args[1])
-    if action == "rename" and len(args) >= 3:
-        return rename(args[0], args[1], " ".join(args[2:]))
-    if action == "add" and len(args) >= 2:
-        return add(args[0], " ".join(args[1:]))
+    if action == "rename" and len(args) >= 4:
+        return rename(args[0], args[1], args[2], " ".join(args[3:]))
+    if action == "add" and len(args) >= 3:
+        return add(args[0], args[1], " ".join(args[2:]))
     return 2
 
 

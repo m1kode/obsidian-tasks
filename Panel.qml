@@ -142,7 +142,7 @@ Panel {
     // would rather do nothing than tick whatever moved into that position.
     editProc.mode = "complete"
     editProc.subject = task
-    editProc.command = [root.helper, "complete", task.file, task.raw]
+    editProc.command = [root.helper, "complete", root.vaultPath, task.file, task.raw]
     editProc.running = true
   }
 
@@ -189,7 +189,7 @@ Panel {
     if (String(text).trim() === "" || String(text).trim() === task.label) return
     editProc.mode = "rename"
     editProc.subject = null
-    editProc.command = [root.helper, "rename", task.file, task.raw, String(text)]
+    editProc.command = [root.helper, "rename", root.vaultPath, task.file, task.raw, String(text)]
     editProc.running = true
   }
 
@@ -197,7 +197,7 @@ Panel {
     if (!root.vaultActive || editProc.running || String(text).trim() === "") return
     editProc.mode = "add"
     editProc.subject = null
-    editProc.command = [root.helper, "add", root.inboxPath, String(text)]
+    editProc.command = [root.helper, "add", root.vaultPath, root.inboxPath, String(text)]
     editProc.running = true
   }
 

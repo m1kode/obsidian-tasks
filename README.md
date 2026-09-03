@@ -65,17 +65,19 @@ Changing any setting needs `omarchy restart shell` to take effect.
 
 ## Format
 
-Standard Obsidian Tasks emoji syntax. Due dates (`📅`) and priorities
-(`🔺⏫🔼🔽⏬`) are read and sorted on; every other signifier is preserved
-untouched, so an edit can't quietly drop metadata this widget doesn't read.
+Both Obsidian Tasks syntaxes, whichever your vault is set to under
+**Task Format** — emoji signifiers or Dataview inline fields:
 
 ```markdown
 - [ ] Renew car insurance 📅 2026-08-30
-- [ ] Reply to landlord ⏫
-- [x] Book dentist ✅ 2026-08-25
+- [ ] Renew car insurance [due:: 2026-08-30]
 ```
 
-Ticking a task rewrites its line in place and stamps `✅` with today's date.
+Due dates and priorities are read and sorted on in either; every other
+signifier is preserved untouched, so an edit can't quietly drop metadata this
+widget doesn't read. Ticking a task rewrites its line in place and stamps the
+completion date the way your vault writes it — `✅ 2026-08-30`, or
+`[completion:: 2026-08-30]`.
 
 ## Dates
 
@@ -135,3 +137,5 @@ phantom tasks that appear in no note you can find.
 
 `Panel.qml` decides what to show; `bin/obsidian-tasks` does every read and write,
 with `complete`, `uncomplete` and `rename` sharing one line-rewrite primitive.
+The panel passes the vault to the commands that write metadata, so the helper
+reads the format from the vault's settings rather than guessing it from a path.

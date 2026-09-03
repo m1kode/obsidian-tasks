@@ -18,11 +18,20 @@ from datetime import date, timedelta
 
 DUE, DONE, CREATED, SCHEDULED, START = "\U0001F4C5", "✅", "➕", "⏳", "\U0001F6EB"
 PRIORITY = {"\U0001F53A": 0, "\U000023EB": 1, "\U0001F53C": 2, "\U0001F53D": 4, "\U000023EC": 5}
-# Every signifier Obsidian Tasks defines, whether or not this tool reads it.
-# The list exists so a rename can find where the description ends and leave
-# metadata it doesn't understand untouched rather than eating it.
-SIGNIFIERS = [DUE, DONE, CREATED, SCHEDULED, START, "❌", "\U0001F501",
-              "\U0001F194", "⛔", "\U0001F6AB"] + list(PRIORITY)
+# The same signifiers, as Obsidian Tasks writes them in its Dataview format.
+# Which of the two a vault uses is its own setting, and a vault switched from
+# one to the other keeps its old lines as they were, so neither list can stand
+# in for the other.
+DATAVIEW = {DUE: "due", DONE: "completion", CREATED: "created",
+            SCHEDULED: "scheduled", START: "start", "❌": "cancelled",
+            "\U0001F501": "repeat", "\U0001F194": "id", "⛔": "dependsOn",
+            "\U0001F3C1": "onCompletion"}
+# Every signifier Obsidian Tasks defines, in both formats, whether or not this
+# tool reads it. The list exists so a rename can find where the description ends
+# and leave metadata it doesn't understand untouched rather than eating it.
+SIGNIFIERS = ([DUE, DONE, CREATED, SCHEDULED, START, "❌", "\U0001F501",
+               "\U0001F194", "⛔", "\U0001F6AB", "\U0001F3C1"] + list(PRIORITY)
+              + [f"[{key}::" for key in list(DATAVIEW.values()) + ["priority"]])
 TASK_RE = re.compile(r"^(?P<indent>\s*)(?P<bullet>[-*+])\s\[(?P<status>.)\]\s(?P<body>.*)$")
 DATE_RE = r"(\d{4}-\d{2}-\d{2})"
 EXCLUDES = ["!.obsidian", "!.trash", "!Templates", "!.git"]
